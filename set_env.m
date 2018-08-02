@@ -1,6 +1,6 @@
 % set environemntal variables for pipeline
 setenv('DATAPATH','Z:\AW\mormyrid_data');
-setenv('SESSDATE','20180612');
+setenv('SESSDATE','20180613');
 setenv('SAMPLERATE','10000');
 setenv('BITS','16');
 setenv('CHAN_NUM','16');
@@ -10,3 +10,7 @@ setenv('BGFRAMES','10');
 setenv('SKIPFILES','0');
 setenv('OBJ_CHANGE','1'); %rec. files where object location was changed
 setenv('FRAMESCALE','2');
+setenv('TRACEBLNK','1'); %trace blank time, ms
+setenv('TRACET','6'); %total trace duration
+setenv('HPF','on');
+setenv('HPF_CFR','100'); %HPF cutoff freq

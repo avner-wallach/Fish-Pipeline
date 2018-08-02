@@ -1,11 +1,16 @@
 function [fish,seg,coornames]=get_posture(txt,num)
 % get DeepLabCut tracking data and convert to model
 % [num,txt,raw] = xlsread('trackedFeaturesRaw.csv');
-    fnames=unique(txt);
+    fnames=setdiff(unique(txt),{'coords','likelihood','scorer','bodyparts','x','y'});
     for i=1:numel(fnames)
-        ind=find(strcmp(txt,fnames{i}))+1;    
-        data.(fnames{i}).xy=num(:,(ind(1):ind(2)));
-        data.(fnames{i}).c=num(:,(ind(3)));
+        ind=find(strcmp(txt(1,:),fnames{i}));    
+        if(~strcmp(txt(1,1),'bodyparts'))
+            ind=ind+1;
+        end
+        if(numel(ind))
+            data.(fnames{i}).xy=num(:,(ind(1):ind(2)));
+            data.(fnames{i}).c=num(:,(ind(3)));
+        end
     end
 
     %% get midpoint between LED and Trunk1
@@ -28,10 +33,13 @@ function [fish,seg,coornames]=get_posture(txt,num)
     fish(data.LED.c<th,strcmp(coornames,'X'))=NaN;
 
     %azim
-    mouthv=data.mouth.xy-data.LED.xy;
+%     mouthv=data.mouth.xy-data.LED.xy;
+    mouthv=data.mouth.xy-data.Trunk1.xy;
     azim=atan2(mouthv(:,2),mouthv(:,1));
     fish(:,strcmp(coornames,'azim'))=azim;
-    fish(data.LED.c<th | data.mouth.c<th,strcmp(coornames,'azim'))=NaN;
+    fish(data.Trunk1.c<th | data.mouth.c<th,strcmp(coornames,'azim'))=NaN;
+%     fish(data.LED.c<th | data.mouth.c<th,strcmp(coornames,'azim'))=NaN;
+
     
     %beta chin
     fish(:,strcmp(coornames,'b_chin'))=get_angle(data.Trunk1,data.mouth,data.chin);
@@ -55,13 +63,13 @@ function [fish,seg,coornames]=get_posture(txt,num)
 %     fish(:,strcmp(coornames,'c_rb'))=get_angle(data.LED,data.midpoint,data.RPecBase);
 
     %gamma right pect tip
-    fish(:,strcmp(coornames,'c_rt'))=get_angle(data.mouth,data.LED,data.RPecTip);
+    fish(:,strcmp(coornames,'c_rt'))=get_angle(data.mouth,data.LED,data.RPecTip,'r');
 
 %     %gamma left pect base
 %     fish(:,strcmp(coornames,'c_lb'))=get_angle(data.LED,data.midpoint,data.LPecBase);
 
     %gamma left pect tip
-    fish(:,strcmp(coornames,'c_lt'))=get_angle(data.mouth,data.LED,data.LPecTip);
+    fish(:,strcmp(coornames,'c_lt'))=get_angle(data.mouth,data.LED,data.LPecTip,'l');
     
     %% extract segment length
     seg(1)=get_segment(data.Trunk1,data.mouth)/2; %LED-mouth
@@ -76,7 +84,10 @@ function [fish,seg,coornames]=get_posture(txt,num)
     seg(10)=get_segment(data.LED,data.LPecBase); %LED-lb
     seg(11)=get_segment(data.LPecBase,data.LPecTip); %lpb-lpt
 
-    function theta=get_angle(fielda,fieldb,fieldc)
+    function theta=get_angle(fielda,fieldb,fieldc,opt)
+        if(nargin<4)
+            opt=' ';
+        end
         A=fielda.xy;
         B=fieldb.xy;
         C=fieldc.xy;    
@@ -86,8 +97,16 @@ function [fish,seg,coornames]=get_posture(txt,num)
         AB=B-A;
         BC=C-B;
         theta=atan2(BC(:,2),BC(:,1))-atan2(AB(:,2),AB(:,1));
+        if(opt=='r')
+            theta=pi/2+theta;
+        elseif(opt=='l')
+            theta=pi/2-theta;
+        end
         theta=mod(theta,2*pi);
+        theta=mod(theta+pi,2*pi)-pi;
+        theta=medfilt1(theta,7);
         theta(ca<th | cb<th | cc<th)=NaN;
+        theta(abs(theta)>=pi/2)=NaN; %remove sporious results
     end
 
     function N=norm2(vec)

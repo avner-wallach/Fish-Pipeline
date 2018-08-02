@@ -16,22 +16,28 @@ bgframes=str2num(getenv('BGFRAMES')); %bgframes=100
 obj_change=str2num(getenv('OBJ_CHANGE')); %rec. files where object location was changed
 skipfiles=str2num(getenv('SKIPFILES')); %files to skip
 framescale=str2num(getenv('FRAMESCALE')); %scaling of video file for feature tracking
+trace_b=str2num(getenv('TRACEBLNK')); %trace blank time, ms
+trace_T=str2num(getenv('TRACET')); %total trace duration
+hpf=getenv('HPF'); %use hpf
+hpf_cfr=str2num(getenv('HPF_CFR')); %HPF cutoff freq
 sesspath=[datapath,'\',sdate,'\'];
 nfiles=dlmread([sesspath,'counter.txt']); %number of files in recording session
+eod_th=NaN;
 %% get adxl parameters
-adxl_param=get_adxl_params()
+adxl_param=get_adxl_params(datapath);
 %%
 data=[];
-for i=1:6%nfiles
+for i=1:2%nfiles
+    i
     if(ismember(i-1,skipfiles))
         continue;
     end
     %open video
     vidname=[sesspath,'video_',num2str(i-1),'.avi'];
-    vid=VideoReader(vidname);
-    get_BG(bgframes);
-    if(ismember(i-1,obj_change)) %objects change in this video
-        get_objects; %plug in hear call to object locating NN
+    vid=VideoReader(vidname);    
+    if(ismember(i-1,obj_change) | ~isfield(data,'FILE')) %objects change in this video
+        get_BG(bgframes);
+        get_objects; %plug in hear call to object locating NN                
     end
 %     get_posture(i);
 
@@ -43,7 +49,6 @@ for i=1:6%nfiles
     
     save([sesspath,'data_',num2str(i-1)],'data');
 end
-
 
 
     function get_sync_data(i)
@@ -63,10 +68,11 @@ end
         sTS=sTS-tv0;    
 
         %fit sync points
-        if(numel(tsync)==(numel(sTS)-1))
-            sTS=sTS(1:end-1);            
-        elseif(numel(tsync)==(numel(sTS)+1))
-            tsync(end)=[];
+        d=numel(sTS)-numel(tsync);
+        if(d>0)            
+            sTS((end-d+1):end)=[];            
+        elseif(d<0)
+            tsync((end-d+1):end)=[];
 %         elseif(numel(data.pulses.sync)>(numel(data.sTS)+1))
 %             warning(['recording ',num2str(sernum),' sync pulse mismatch']);
 %             return;
@@ -85,16 +91,42 @@ end
     end
 
     function get_amp_data(i)
-%         R=load([sesspath,'amp_',num2str(i-1)]);
         outchans=[1:16];
-        [t,amp]=read_bonsai_data([sesspath,'amp_',num2str(i-1)],samplerate,chan_num,bits,blocksize,outchans);             
+        [t,amp]=read_bonsai_binary([sesspath,'amp_',num2str(i-1)],samplerate,chan_num,blocksize,outchans,'adc');
+        if(isnan(eod_th)) %first file
+            get_eod_th(amp);
+        end
         [eodind]=get_eod_times(t,amp);
-        [data.EOD.t,data.EOD.lat,data.EOD.amp,data.EOD.traces]=get_lfp_data(t,amp,eodind);
+        if(strcmp(hpf,'on'))
+            hp = hpf_cfr;
+            hp = hp * 2 /samplerate; % normalize to nyquist rate
+            [N, Wn] = buttord( hp, hp .* [.75], 3, 20); 
+            [B,A] = butter(N,Wn,'high');
+            amp=filtfilt(B,A,amp); % zero-phase LPF
+        end
+        [data.EOD.t,data.EOD.traces]=get_lfp_data(t,amp,eodind);
         
     end
 
+    function get_eod_th(amp)
+        F=figure;
+        A=axis;
+        ind=1:1e5;
+        H=plot(amp(ind,eodchan));
+        prompt = {'EOD Threshold:'};
+        dlg_title = '';
+        num_lines = 1;
+        defaultans = {'5000'};
+        opt.WindowStyle='normal';
+        answer = inputdlg(prompt,dlg_title,num_lines,defaultans,opt);
+        eod_th=str2num(answer{1});
+        close(F);
+    end
+        
+        
+        
     function [eodind]=get_eod_times(t,amp)
-        eod_th=0.5; %EOD threshold
+%         eod_th=0.5; %EOD threshold
         eod_ref=0.01; %EOD refractory time
 
         ind=find(diff(amp(:,eodchan)>eod_th)==1); %find threshold posedge
@@ -111,14 +143,10 @@ end
 %         iei=[inf diff(teod)];
     end
 
-    function [teod,lat,amps,traces]=get_lfp_data(t,amp,ind)
-        dt=median(diff(t));
-        trace_b=0.001; %trace blank time
-        trace_T=0.005; %total trace end time
-%         trace_t=0.005; %saved trace end time
+    function [teod,traces]=get_lfp_data(t,amp,ind)
+        dt=median(diff(t))*1e3;
         trace_B=ceil(trace_b/dt);
         trace_N=ceil(trace_T/dt);
-%         trace_n=ceil(trace_t/dt);
         
         ind=ind(ind<(size(amp,1)-trace_N));
         I=ind*ones(1,trace_N) + ones(numel(ind),1)*[0:trace_N-1]; %index matrix
@@ -130,8 +158,8 @@ end
             traces(:,:,j)=T;
         end
 
-        [amplitudes,lind]=min(traces,[],2);
-        latencies=lind*dt+trace_b;
+%         [amplitudes,lind]=min(traces,[],2);
+%         latencies=lind*dt+trace_b;
         % get score- correlation with median trace (to remove 
 %         T=median(traces,2);
 %         for j=1:size(traces,1)
@@ -139,8 +167,8 @@ end
 %         end
 % 
 %         traces=traces(:,1:trace_n);
-        amps=permute(amplitudes,[1,3,2]);
-        lat=permute(latencies,[1,3,2]);
+%         amps=permute(amplitudes,[1,3,2]);
+%         lat=permute(latencies,[1,3,2]);
         teod=t(ind)-data.FILE.offset;
 % 
     end            
@@ -149,7 +177,7 @@ end
         fname=[sesspath,'aux_',num2str(i-1)];
         if(exist(fname))
             % accelorometer data
-            [aux_t,aux_d]=read_bonsai_data(fname,samplerate/4,3,bits,blocksize/4);             
+            [aux_t,aux_d]=read_bonsai_binary(fname,samplerate/4,3,blocksize/4,[1:3],'aux');             
             [t,roll,pitch,yaw]=get_adxl_angles(aux_t,aux_d);
             %sample by frame
             data.FRAME.roll=interp1(t,roll,data.FRAME.t);
@@ -177,7 +205,7 @@ end
         %total acceleration
         A=sqrt(x.^2 + y.^2 + z.^2);
         roll=atan(x./(sqrt(y.^2 + z.^2)));
-        pitch=atan(y./(sqrt(x.^2 + z.^2)));
+        pitch=atan(y./(sqrt(x.^2 + z.^2)))-pi/2;
         yaw=atan(z./(sqrt(x.^2 + y.^2)));
 
         %down sample
@@ -211,7 +239,7 @@ end
         times=sort(vid.Duration*rand(imnum,1)); %random timepoints
         cdata=zeros(vid.Height,vid.Width,imnum);
         for j=1:imnum
-            j
+%             j
             vid.CurrentTime=times(j);
             F= readFrame(vid);
             FF=mean(F,3);
@@ -229,11 +257,12 @@ end
         trackfile=[sesspath,'trackedFeaturesRaw_',num2str(i-1)];
         [num,txt,raw] = xlsread([trackfile,'.csv']);
         [fish,seg,coornames]=get_posture(txt,num);
-        data.FRAME.posture=fish(2:end,:)*framescale; %remove 1st frame data
+        data.FRAME.posture=fish(2:end,:); %remove 1st frame data
+        data.FRAME.posture(:,1:2)=data.FRAME.posture(:,1:2)*framescale;
         data.FILE.model=coornames;
         %EOD sample posture
         for j=1:size(fish,2)
-            efish(:,j)=interp1(data.FRAME.t,fish(2:end,j)*framescale,data.EOD.t);
+            efish(:,j)=interp1(data.FRAME.t,data.FRAME.posture(:,j),data.EOD.t);
         end
         data.EOD.posture=efish;
     end
@@ -241,10 +270,10 @@ end
             
 end
 
-function adxl_param=get_adxl_params()
+function adxl_param=get_adxl_params(datapath)
 if(ismac)
     load('/Users/avner_wallach/Documents/Mormyrid_Data/matlab/ADXL_params_rev1_0.mat');
 else
-    load('C:\Users\Avner\iCloudDrive\Documents\Mormyrid_Data\matlab\ADXL_params_rev1_0.mat');
+    load([datapath,'\ADXL_calibrate\ADXL_params_rev1_0.mat']);
 end
 end
