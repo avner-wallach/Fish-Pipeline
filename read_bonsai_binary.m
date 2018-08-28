@@ -14,6 +14,9 @@ D = fopen(fileName);
 % numChannels = 32;
 B = fread(D,Inf,'uint16'); %read in m x n matrix, m = numChannels
 B=reshape(B,blocksize,[]);
+%truncate in case saving crashed in mid saving
+b=size(B,2);
+B=B(:,1:(b-mod(b,numChannels)));
 for i=1:numel(chans)
     A(:,i)=reshape(B(:,chans(i):numChannels:end),[],1);
 end

@@ -43,9 +43,9 @@ for i=1:numel(segnums)
         end        
         for j=1:numel(chnind)
             F=plot_traces(chnind(j));
-%             [win(j,:),pol(j)]=lfpdlg(j);
-            win(j,:)=trwind(j,:);
-            pol(j)=(tracedown(j)=='+');
+            [win(j,:),pol(j)]=lfpdlg(j);
+%             win(j,:)=trwind;
+%             pol(j)=(tracedown(j)=='+');
 
             lfp_temp{j}=get_lfp_shape(data.EOD.traces(:,:,chnind(j)),win(j,:));
             close(F);
@@ -58,8 +58,8 @@ for i=1:numel(segnums)
     gind=get_good_inds(data.EOD.t,data.EOD.traces,amp);
     lat=lat(gind,:);
     amp=amp(gind,:);
-    all_lat=nanmedian(zscore(lat(:,[2 4]),[],1),2);
-    all_amp=nanmedian(zscore(amp(:,[2 4]),[],1),2);
+    all_lat=median(zscore(lat,[],1),2);
+    all_amp=median(zscore(amp,[],1),2);
 
     deodt=[nan diff(data.EOD.t)];
     eod.t=[eod.t;data.EOD.t(gind)'];
@@ -133,10 +133,10 @@ function [lat,amp,cr]=get_lfp_stats(traces)
         [m,mind]=min(traces(:,ind,chnind(k)),[],2);
         if(pol(k))
             amp(:,k)=M;
-            lind=Mind;
+            l=Mind;
         else
             amp(:,k)=-m;
-            lind=mind;            
+            lat(:,k)=mind;            
         end        
 %         amp(:,k)=M-m;
 %         lind=min(Mind,mind);
@@ -160,7 +160,7 @@ function indg=get_good_inds(t,traces,amps)
     %remove within refractory period after noise
     for j=1:numel(indb)
         T=(t(indg)-t(indb(j)));
-        idx=find(T>0 & T<.15);
+        idx=find(T>0 & T<.2);
         indg(idx)=[];
     end
     

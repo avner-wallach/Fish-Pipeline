@@ -106,15 +106,15 @@ function [fish,seg,coornames]=get_posture(txt,num,position)
         AB=B-A;
         BC=C-B;
         theta=atan2(BC(:,2),BC(:,1))-atan2(AB(:,2),AB(:,1));
-        if(opt=='l')
+        if(opt=='r')
             theta=pi/2-theta;
-        elseif(opt=='r')
-            theta=theta+pi/2;
+        elseif(opt=='l')
+            theta=theta-pi/2;
         end
         theta=mod(theta,2*pi);
         theta=mod(theta+pi,2*pi)-pi;        
         theta(ca<th | cb<th | cc<th)=NaN;
-        theta(abs(theta)>1)=NaN; %remove sporious results
+        theta(abs(theta)>=pi/2)=NaN; %remove sporious results
         theta=medfilt1(theta,medfiltk,[],1,'omitnan');
     end
 
