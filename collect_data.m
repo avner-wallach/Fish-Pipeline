@@ -1,4 +1,4 @@
-function[frame,eod,file]=collect_data(segnums)
+function[frame,eod,file]=collect_data(segnums,frame,eod,file)
 %COLLECT_DATA collect data from segments numbered segnums, taking
 %physiology data from channels chnind
 
@@ -6,75 +6,113 @@ datapath=getenv('DATAPATH');
 sdate=getenv('SESSDATE');
 samplerate=str2num(getenv('SAMPLERATE'));
 trace_b=str2num(getenv('TRACEBLNK')); %trace blank time, ms
-outchans=str2num(getenv('OUTCHANS')); %vector of channels to keep
-dtrendt=str2num(getenv('DETRENDT'));
+% outchans=str2num(getenv('OUTCHANS')); %vector of channels to keep
 
 trwind=str2num(getenv('TRACEWIND')); %window for measuring field
 tracedown=str2num(getenv('TRACEDOWN')); %direction of LFP 1=down, 0=up
+tracedlg=getenv('TRACEDLG'); %trace dialog
+% trwind=[1 5];
+% tracedown=1;
 traceth=str2num(getenv('TRACETH')); %threshold for cleaning noise
+tracenum=str2num(getenv('TRACENUM'));    %number of averaged traces
+tracevar=getenv('TRACEVAR');   %ordering variable for averaged traces
+
+dtrend=getenv('DETREND');
+dtrendt=str2num(getenv('DETRENDT'));
+glitchth=str2num(getenv('GLITCHTH'));
+glitcht=str2num(getenv('GLITCHT'));
+glitchref=str2num(getenv('GLITCHREF'));
 
 sesspath=[datapath,'\',sdate,'\'];
-frame.t=[];
-frame.data=[];
-frame.ind0=[1];
-eod.t=[];
-eod.data=[];
-eod.ind0=[1];
+if(nargin==1)
+    frame.t=[];
+    frame.data=[];
+    frame.ind0=[1];
+    eod.t=[];
+    eod.data=[];
+    eod.ind0=[1];
+end
+    
 latnames={};
 ampnames={};
 for i=1:numel(segnums)
     i
+    if(~exist([sesspath,'data_',num2str(segnums(i)),'.mat']))
+        continue;
+    end
     s=load([sesspath,'data_',num2str(segnums(i))]);
     data=s.data;
-    N=min([numel(data.FRAME.t),size(data.FRAME.posture,1),numel(data.FRAME.roll),numel(data.FRAME.pitch),numel(data.FRAME.yaw)]);
+    N=min([numel(data.FRAME.t),size(data.FRAME.posture,1),numel(data.FRAME.accx),numel(data.FRAME.accy),numel(data.FRAME.accz)]);
     frame.t=[frame.t;data.FRAME.t(1:N)];
-    frame.data=[frame.data;data.FRAME.posture(1:N,:) data.FRAME.roll(1:N) data.FRAME.pitch(1:N) data.FRAME.yaw(1:N)];
-    frame.fnames={data.FILE.model{:} 'roll' 'pitch' 'yaw'};
+    frame.data=[frame.data;data.FRAME.posture(1:N,:) data.FRAME.accx(1:N) data.FRAME.accy(1:N) data.FRAME.accz(1:N)];
+    frame.fnames={data.FILE.model{:} 'accx' 'accy' 'accz'};
     frame.ind0=[frame.ind0;size(frame.data,1)];
     if(i==1)
-        F=plot_traces;   
-%         [chnind]=chndlg()
-        chnind=outchans;
-        close(F);
+%         F=plot_traces;   
+%         if(~numel(outchans))
+%             [chnind]=chndlg()
+%         else
+        outchans=[1:size(data.EOD.traces,3)];
+           chnind=outchans;
+%         end
+%         close(F);
         for k=1:numel(chnind)
             latnames{k}=['lat',num2str(chnind(k))];
             ampnames{k}=['amp',num2str(chnind(k))];
+            aucnames{k}=['auc',num2str(chnind(k))];
 %             crnames{k}=['cr',num2str(chnind(k))];        
         end        
-        for j=1:numel(chnind)
-            F=plot_traces(chnind(j));
-%             [win(j,:),pol(j)]=lfpdlg(j);
-            win(j,:)=trwind(j,:);
-            pol(j)=(tracedown(j)=='+');
+        if(numel(trwind)>2)
+%             for j=1:numel(chnind)
+%                 F=plot_traces(chnind(j));
+%                 [win(j,:),pol(j)]=lfpdlg(j);
+%                 close(F);                           
+%             end            
+            for j=1:numel(chnind)
+                win(j,:)=trwind(j,:);
+                pol(j)=(~tracedown(j));
+            end
 
-            lfp_temp{j}=get_lfp_shape(data.EOD.traces(:,:,chnind(j)),win(j,:));
-            close(F);
+        else        
+            for j=1:numel(chnind)
+                win(j,:)=trwind;
+                pol(j)=(~tracedown);
+            end
         end
-        file=data.FILE;
+%             lfp_temp{j}=get_lfp_shape(data.EOD.traces(:,:,chnind(j)),win(j,:));
+
+        if(nargin==1)
+            file=data.FILE;
+            file.offset=[];
+            file.title=[];
+        end
     end
-    [lat,amp,cr]=get_lfp_stats(data.EOD.traces);
+    [lat,amp,auc,avtraces(:,:,:,i)]=get_lfp_stats(data.EOD.traces);
     % get median readings (standatized) from entire site
     
     gind=get_good_inds(data.EOD.t,data.EOD.traces,amp);
     lat=lat(gind,:);
     amp=amp(gind,:);
-    all_lat=nanmedian(zscore(lat(:,[2 4]),[],1),2);
-    all_amp=nanmedian(zscore(amp(:,[2 4]),[],1),2);
+    auc=auc(gind,:);
+%     all_lat=nanmedian(zscore(lat(:,[2 4]),[],1),2);
+%     all_amp=nanmedian(zscore(amp(:,[2 4]),[],1),2);
 
     deodt=[nan diff(data.EOD.t)];
     eod.t=[eod.t;data.EOD.t(gind)'];
     iei=deodt(gind)';    
-    eod.data=[eod.data;iei data.EOD.posture(gind,:) data.EOD.roll(gind)' data.EOD.pitch(gind)' data.EOD.yaw(gind)' lat amp all_lat all_amp];% cr(gind,:)];
-    eod.fnames={'iei' data.FILE.model{:} 'roll' 'pitch' 'yaw' latnames{:} ampnames{:} 'all_lat' 'all_amp'};%crnames{:}};
+    eod.data=[eod.data;iei data.EOD.posture(gind,:) data.EOD.accx(gind)' data.EOD.accy(gind)' data.EOD.accz(gind)' lat amp auc];% cr(gind,:)];
+    eod.fnames={'iei' data.FILE.model{:} 'accx' 'accy' 'accz' latnames{:} ampnames{:} aucnames{:}};%crnames{:}};
     eod.ind0=[eod.ind0;size(eod.data,1)];
     
-    file.offset(i)=data.FILE.offset;    
+    file.offset=[file.offset;data.FILE.offset];    
     
 end
 
+eod.avtraces=avtraces;
+
 function F=plot_traces(ind)
     K=floor(sqrt(numel(outchans)));
-    M=numel(outchans)/K;
+    M=ceil(numel(outchans)/K);
     F=figure;
     x=[1:size(data.EOD.traces,2)]/samplerate*1e3+trace_b;
     if(nargin>0)
@@ -82,7 +120,7 @@ function F=plot_traces(ind)
         my_plotWithConf_Q(x,q',[0 0 0],1);
     else
         for j=1:numel(outchans)
-            q=quantile(data.EOD.traces(:,:,j),[0.25 0.5 0.75]);
+            q=quantile(data.EOD.traces(:,:,outchans(j)),[0.25 0.5 0.75]);
             subplot(K,M,j), my_plotWithConf_Q(x,q',[0 0 0],1);
         end
     end
@@ -101,7 +139,7 @@ function [win,pol]=lfpdlg(idx)
     prompt = {'window start:','window end:','polarity:'};
     dlg_title = 'LFP window params';
     num_lines = 1;
-    if(tracedown(idx))
+    if(tracedown)
         trdir='-';
     else
         trdir='+';
@@ -118,24 +156,52 @@ function lfp_tmp=get_lfp_shape(traces,wind)
     lfp_tmp=nanmedian(traces(:,ind),1);    
 end
 
-function [lat,amp,cr]=get_lfp_stats(traces)
+function [lat,amp,auc,avtraces]=get_lfp_stats(traces)
     x=[1:size(traces,2)]/samplerate*1e3+trace_b;    
     t_align=dtrendt-trace_b;
     N_align=ceil(t_align*samplerate/1e3);
 %     N_align=[12];
+
+    %lpf filter
+    lp=100*2/samplerate;
+    [NN, Wn] = buttord( lp, lp .* [0.75], 3, 20);
+    [B1,A1] = butter(NN,Wn,'high');
     
     for k=1:numel(chnind)
-        %detrend
-        traces(:,:,chnind(k))=detrend(traces(:,:,chnind(k))','linear',N_align)';
+        
+        if(numel(glitchth))        
+            t_noise=glitcht;
+            N_noise=min(max(ceil(t_noise*samplerate/1e3),1),size(traces,2));            
+            ind=find(max(abs(diff(traces(:,N_noise(1):N_noise(2),chnind(k)),1,2)),[],2)>glitchth(k));
+            if(numel(ind))
+                traces(ind,:,chnind(k))=nan;
+            end
+        end
+
+        %clean glitches
+        %detrend        
+        if(strcmp(dtrend,'on'))        
+            traces(:,:,chnind(k))=my_detrend(traces(:,:,chnind(k)),N_align);
+        elseif(strcmp(dtrend,'matlab'))        
+            if(numel(N_align))
+                traces(:,:,chnind(k))=detrend(traces(:,:,chnind(k))','linear',N_align)';
+            else
+                traces(:,:,chnind(k))=detrend(traces(:,:,chnind(k))')';
+            end
+        elseif(strcmp(dtrend,'hpf'))        
+            traces(:,:,chnind(k))=filtfilt(B1,A1,traces(:,:,chnind(k))')';
+        end
         
         ind=find(x>=win(k,1) & x<=win(k,2));
         [M,Mind]=max(traces(:,ind,chnind(k)),[],2);
         [m,mind]=min(traces(:,ind,chnind(k)),[],2);
         if(pol(k))
             amp(:,k)=M;
+            auc(:,k)=sum(traces(:,ind,chnind(k)).*(traces(:,ind,chnind(k))>0),2);
             lind=Mind;
         else
             amp(:,k)=-m;
+            auc(:,k)=-sum(traces(:,ind,chnind(k)).*(traces(:,ind,chnind(k))<0),2);
             lind=mind;            
         end        
 %         amp(:,k)=M-m;
@@ -145,22 +211,27 @@ function [lat,amp,cr]=get_lfp_stats(traces)
         amp(I,k)=NaN;
         lat(I,k)=NaN;
         
-        %correlation with template
-%         for m=1:size(traces,1)
-%             cr(m,k)=corr(traces(m,ind,chnind(k))',lfp_temp{k}');
-%         end
-        cr=[];
+        if(strcmp(tracevar,'amp'))
+            [x,avtraces(:,:,k)]=plot_graded(x,traces(:,:,chnind(k)),amp(:,k),tracenum,0);
+        elseif(strcmp(tracevar,'lat'))
+            [x,avtraces(:,:,k)]=plot_graded(x,traces(:,:,chnind(k)),lat(:,k),tracenum,0);
+        else
+            [x,avtraces(:,:,k)]=plot_graded(x,traces(:,:,chnind(k)),auc(:,k),tracenum,0);
+        end
 
     end
 end
 
 function indg=get_good_inds(t,traces,amps)
-    indg=find(~isnan(sum(sum(traces,3),2)));    %good traces
-    indb=find(isnan(sum(sum(traces,3),2)));     %bad traces
+%     indg=find(~isnan(sum(sum(traces,3),2)));    %good traces
+%     indb=find(isnan(sum(sum(traces,3),2)));     %bad traces
+    A=prod(prod(isnan(traces),3),2);
+    indg=find(~A);    %good traces
+    indb=find(A);     %bad traces
     %remove within refractory period after noise
     for j=1:numel(indb)
         T=(t(indg)-t(indb(j)));
-        idx=find(T>0 & T<.15);
+        idx=find(T>0 & T<glitchref);
         indg(idx)=[];
     end
     

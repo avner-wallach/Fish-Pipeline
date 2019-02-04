@@ -9,11 +9,6 @@ chan_num=str2num(getenv('CHAN_NUM'));%number of channels recorded
 outchans=str2num(getenv('OUTCHANS')); %vector of channels to keep
 blocksize=str2num(getenv('BLOCKSIZE'));%blocksize=256;
 
-dtrend=getenv('DETREND');
-dtrendt=str2num(getenv('DETRENDT'));
-glitchth=str2num(getenv('GLITCHTH'));
-glitcht=str2num(getenv('GLITCHT'));
-glitchw=str2num(getenv('GLITCHW'));
 bpf=getenv('BPF'); %use bpf
 hpf_cfr=str2num(getenv('HPF_CFR')); %HPF cutoff freq
 lpf_cfr=str2num(getenv('LPF_CFR')); %LPF cutoff freq
@@ -38,9 +33,24 @@ trace_T=str2num(getenv('TRACET')); %total trace duration
 trace_S=str2num(getenv('TRACESAVED')); %saved trace duration
 
 vsync_mode=getenv('VIDEO_SYNC'); 
+offline_sync_files=str2num(getenv('OFFLINE_SYNC_FILES'));
+
 sesspath=[datapath,'\',sdate,'\'];
 nfiles=dlmread([sesspath,'counter.txt']); %number of files in recording session
 eod_th=NaN;
+
+dnotch = designfilt('bandstopiir','FilterOrder',4, ...
+    'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
+    'DesignMethod','butter','SampleRate',samplerate);
+[b_dnotch,a_dnotch]=tf(dnotch)
+if(strcmp(bpf,'on'))
+    dlp = designfilt('bandpassiir','FilterOrder',8, ...
+            'HalfPowerFrequency1',hpf_cfr,'HalfPowerFrequency2',lpf_cfr, ...
+             'SampleRate',samplerate);
+    [b_dlp,a_dlp]=tf(dlp)
+
+end
+
 %% get adxl parameters
 adxl_param=get_adxl_params(datapath);
 %%
@@ -53,16 +63,38 @@ for i=1:nfiles
     %open video
     vidname=[sesspath,'video_',num2str(i-1),'.avi'];
 
-    if(ismember(i-1,obj_change) | (~isfield(data,'FILE') & ~exist([sesspath,'data_',num2str(i-2),'.mat'])))%objects change in this video    
+    if(ismember(i-1,obj_change))% | (~isfield(data,'FILE') & ~exist([sesspath,'data_',num2str(i-2),'.mat'])))%objects change in this video    
         S=load([sesspath,'objects_',num2str(i-1),'.mat']);
         data.FILE.BG=S.BG;
-        data.FILE.objects=S.objects;
-        data.FILE.corners=S.corners;
-%         get_BG(bgframes,vidname);
-%         get_objects; %plug in hear call to object locating NN                
-    end
-    if(~isfield(data,'FILE') & exist([sesspath,'data_',num2str(i-2),'.mat'])) 
-        load([sesspath,'data_',num2str(i-2),'.mat']);
+        if(isfield(S,'objects'))
+            data.FILE.objects=S.objects;
+        else
+            data.FILE.objects=[];
+        end
+        if(isfield(S,'corners'))
+            data.FILE.corners=S.corners;
+        else
+            data.FILE.corners=[];
+        end
+        if(isfield(S,'home'))
+            data.FILE.home=S.home;
+        else
+            data.FILE.home=[];
+        end
+        if(isfield(S,'circle'))
+            data.FILE.circle=S.circle;
+        else
+            data.FILE.circle=[];
+        end
+    elseif(~isfield(data,'FILE'))% & exist([sesspath,'data_',num2str(i-2),'.mat'])) 
+        m=2;
+        while(~exist([sesspath,'data_',num2str(i-m),'.mat']) & m<i)
+            m=m+1;
+        end
+        if(m==i)
+            error('no previous object data!');
+        end
+        load([sesspath,'data_',num2str(i-m),'.mat']);
     end
 %     get_posture(i);
 
@@ -82,11 +114,14 @@ end
         tv=timestampDecoder(v(:,1));
 
         %video sync timestamps
-        if(strcmp(vsync_mode,'online'))
-            sTS=timestampDecoder(dlmread([sesspath,'video_syncTS',num2str(i-1)]));
-        else
+        if(strcmp(vsync_mode,'offline') | ismember(i-1,offline_sync_files))
             ind=dlmread([sesspath,'video_syncTS_offline_',num2str(i-1)]);
             sTS=tv(ind(ind<numel(tv)));
+        else
+            sTS=timestampDecoder(dlmread([sesspath,'video_syncTS',num2str(i-1)]));
+            if(sTS(1)<tv(1)) %one overflow lost
+                sTS=sTS+128;
+            end
         end
         
         pulses=dlmread([sesspath,'pulses_',num2str(i-1)]);
@@ -102,7 +137,7 @@ end
         if(d>0)            
             sTS((end-d+1):end)=[];            
         elseif(d<0)
-            tsync((end-d+1):end)=[];
+            tsync((end+d+1):end)=[];
         end
         %check matching
         c=corr(diff(sTS),diff(tsync))
@@ -110,7 +145,7 @@ end
             offset=median(sTS-tsync);
         else
             X=[]; Y=[];
-            for n=-3:3
+            for n=-10:10
                 x=circshift(sTS,n);
                 y=tsync;
                 sind=find(abs(diff(x)-diff(y))<1/framerate);
@@ -125,7 +160,10 @@ end
         if(~exist('offset'))
             error('syncpulse error');
         end
-        
+        if(abs(offset)>10)
+            error('offset error- too large');
+        end
+
         
         %sync event times
         if(max(pulses(:,1))==2)
@@ -198,24 +236,18 @@ end
         end
     end
 
-    function [ vout ] = filter_voltage(vin)
-    vout=vin;    
-    dnotch = designfilt('bandstopiir','FilterOrder',4, ...
-        'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
-        'DesignMethod','butter','SampleRate',samplerate);
-    if(strcmp(bpf,'on'))
-        dlp = designfilt('bandpassiir','FilterOrder',8, ...
-                'CutoffFrequency1',hpf_cfr,'CutoffFrequency2',lpf_cfr, ...
-                 'SampleRate',samplerate);
-    end
+    function [ vin ] = filter_voltage(vin)
+%     vout=vin;    
     for j=1:size(vin,2)                        
         %notch
         if(strcmp(n60f,'on'))
-        vout(:,j)=filtfilt(dnotch,vin(:,j));
+            tic;
+            vin(:,j)=FiltFiltM(b_dnotch,a_dnotch,vin(:,j));
+            toc
         end
 
         if(strcmp(bpf,'on'))
-             vout(:,j)=filtfilt(dlp,vout(:,j));
+             vin(:,j)=filtfilt(b_dlp,a_dlp,vin(:,j));
         end
 
     end
@@ -239,25 +271,25 @@ end
         
         teod=t(ind)-data.FILE.offset;
         
-        if(strcmp(dtrend,'on'))
-            t_align=dtrendt;
-            N_align=ceil(t_align/dt);
-%             M=mean(traces(:,N_align(1):N_align(2),:),2);
-%             traces=traces-repmat(M,1,size(traces,2),1);
-            % tr=traces-repmat(median(traces(:,1:N_align,:),2),1,size(traces,2),1);
-            for j=1:size(amp,2)
-                traces(:,:,j)=detrend(traces(:,:,j)','linear',N_align)';
-            end            
-        end
+%         if(strcmp(dtrend,'on'))
+%             t_align=dtrendt;
+%             N_align=ceil(t_align/dt);
+% %             M=mean(traces(:,N_align(1):N_align(2),:),2);
+% %             traces=traces-repmat(M,1,size(traces,2),1);
+%             % tr=traces-repmat(median(traces(:,1:N_align,:),2),1,size(traces,2),1);
+%             for j=1:size(amp,2)
+%                 traces(:,:,j)=detrend(traces(:,:,j)','linear',N_align)';
+%             end            
+%         end
         
-        if(numel(glitchth))        
-            t_noise=glitcht;
-            N_noise=min(max(ceil(t_noise/dt),1),size(traces,2));            
-            for j=1:size(amp,2)            
-                ind=find(max(abs(diff(traces(:,N_noise(1):N_noise(2),j),1,2)),[],2)>glitchth);
-                traces(ind,:,j)=nan;
-            end
-        end
+%         if(numel(glitchth))        
+%             t_noise=glitcht;
+%             N_noise=min(max(ceil(t_noise/dt),1),size(traces,2));            
+%             for j=1:size(amp,2)            
+%                 ind=find(max(abs(diff(traces(:,N_noise(1):N_noise(2),j),1,2)),[],2)>glitchth);
+%                 traces(ind,:,j)=nan;
+%             end
+%         end
                 
         %save shorter trace
         traces(:,(trace_M+1):end,:)=[];
@@ -269,15 +301,22 @@ end
         if(exist(fname))
             % accelorometer data
             [aux_t,aux_d]=read_bonsai_binary(fname,samplerate/4,3,blocksize/4,[1:3],'aux');             
-            [t,roll,pitch,yaw]=get_adxl_angles(aux_t,aux_d);
+%             [t,roll,pitch,yaw]=get_adxl_angles(aux_t,aux_d);
+            [t,x,y,z]=get_adxl_vectors(aux_t,aux_d);
             %sample by frame
-            data.FRAME.roll=interp1(t,roll,data.FRAME.t);
-            data.FRAME.pitch=interp1(t,pitch,data.FRAME.t);
-            data.FRAME.yaw=interp1(t,yaw,data.FRAME.t);
+%             data.FRAME.roll=interp1(t,roll,data.FRAME.t);
+%             data.FRAME.pitch=interp1(t,pitch,data.FRAME.t);
+%             data.FRAME.yaw=interp1(t,yaw,data.FRAME.t);
+            data.FRAME.accx=interp1(t,x,data.FRAME.t);
+            data.FRAME.accy=interp1(t,y,data.FRAME.t);
+            data.FRAME.accz=interp1(t,z,data.FRAME.t);
             %sample by EOD
-            data.EOD.roll=interp1(t,roll,data.EOD.t);
-            data.EOD.pitch=interp1(t,pitch,data.EOD.t);
-            data.EOD.yaw=interp1(t,yaw,data.EOD.t);
+%             data.EOD.roll=interp1(t,roll,data.EOD.t);
+%             data.EOD.pitch=interp1(t,pitch,data.EOD.t);
+%             data.EOD.yaw=interp1(t,yaw,data.EOD.t);
+            data.EOD.accx=interp1(t,x,data.EOD.t);
+            data.EOD.accy=interp1(t,y,data.EOD.t);
+            data.EOD.accz=interp1(t,z,data.EOD.t);
         end
 
     end
@@ -301,6 +340,23 @@ end
         roll=decimate(roll,D);
         pitch=decimate(pitch,D);
         yaw=decimate(yaw,D);
+        t=decimate(aux_t-data.FILE.offset,D);
+
+    end
+
+    function [t,x,y,z]=get_adxl_vectors(aux_t,aux_d)
+
+        D=50; %decimate factor
+
+        %convert to g
+        x=(aux_d(:,1)-adxl_param.x0)/adxl_param.xg; %left=positive
+        y=(aux_d(:,2)-adxl_param.y0)/adxl_param.yg; %front=positive
+        z=(aux_d(:,3)-adxl_param.z0)/adxl_param.zg; %down=positive
+
+        %down sample
+        x=decimate(x,D);
+        y=decimate(y,D);
+        z=decimate(z,D);
         t=decimate(aux_t-data.FILE.offset,D);
 
     end
