@@ -1,5 +1,8 @@
-function objects_pipline()
+function objects_pipline(daynum)
 %% parameters
+databasef=getenv('DATABASEFILE');
+expnum=str2num(getenv('EXPNUM'));
+
 datapath=getenv('DATAPATH');
 sdate=getenv('SESSDATE');
 
@@ -7,12 +10,19 @@ bgframes=str2num(getenv('BGFRAMES')); %bgframes=100
 obj_change=str2num(getenv('OBJ_CHANGE')); %rec. files where object location was changed
 skipfiles=str2num(getenv('SKIPFILES')); %files to skip
 
-framescale=str2num(getenv('FRAMESCALE')); %scaling of video file for feature tracking
-framecrop=getenv('FRAMECROP');  %cropping of videos for tracking
-cropsize=str2num(getenv('CROPSIZE')); %size of cropped image, pre-scaling
+% framescale=str2num(getenv('FRAMESCALE')); %scaling of video file for feature tracking
+% framecrop=getenv('FRAMECROP');  %cropping of videos for tracking
+% cropsize=str2num(getenv('CROPSIZE')); %size of cropped image, pre-scaling
 
 sesspath=[datapath,'\',sdate,'\'];
 nfiles=dlmread([sesspath,'counter.txt']); %number of files in recording session
+% nfiles=0;
+%% save params to database
+load(databasef);
+experiment(expnum).day(daynum).skipfiles=skipfiles;
+experiment(expnum).day(daynum).obj_change=obj_change;
+save(databasef,'experiment');
+
 %%
 for i=1:nfiles
     BG=[];
@@ -95,7 +105,8 @@ end
         cdata=zeros(vid.Height,vid.Width,imnum);
         for j=1:imnum
             vid.CurrentTime=times(j);
-exi            FF=mean(F,3);
+            F=readFrame(vid);
+            FF=mean(F,3);
             cdata(:,:,j)=FF;
         end
 

@@ -1,60 +1,169 @@
-function fish_pipeline()
+function fish_pipeline(daynum)
 %% parameters
+
+databasef=getenv('DATABASEFILE');
+expnum=str2num(getenv('EXPNUM'));
+
+%data
 datapath=getenv('DATAPATH');
 sdate=getenv('SESSDATE');
+
+%amp parameters
 samplerate=str2num(getenv('SAMPLERATE'));
 framerate=str2num(getenv('FRAMERATE'));
 bits=str2num(getenv('BITS'));        %bits=16;
 chan_num=str2num(getenv('CHAN_NUM'));%number of channels recorded 
 outchans=str2num(getenv('OUTCHANS')); %vector of channels to keep
 blocksize=str2num(getenv('BLOCKSIZE'));%blocksize=256;
+blankfile=str2num(getenv('BLANKFILES'));%files in which we blank noise
+blankwins=str2num(getenv('BLANKWIN'));%noise blank window
 
+%filtering
 bpf=getenv('BPF'); %use bpf
 hpf_cfr=str2num(getenv('HPF_CFR')); %HPF cutoff freq
 lpf_cfr=str2num(getenv('LPF_CFR')); %LPF cutoff freq
 n60f=getenv('N60F');  %60 hz notch filter
+
+%eod detection
+eoddetmode=getenv('EODDETMODE'); %adc/amp
 
 eodchan=str2num(getenv('EODCHAN')); %eodchan=3;
 eodref=str2num(getenv('EODREF'));%msec refractory time
 eoddiff=getenv('EODDIFF');%find EOD from amp derivative
 eodth=str2num(getenv('EODTH')); %eod threshold
 
+%channel groups
+changroups={};
+eval(['changroups=',getenv('CHANGROUPS'),';'])
+
+%spike detection
+%blanking
+blank_gap=str2num(getenv('BLANKGAP'));
+blank_pre=str2num(getenv('BLANKPRE'));
+blank_post=str2num(getenv('BLANKPOST'));
+
+%spike detection
+reftime=str2num(getenv('REFTIME'));
+spikewidth=str2num(getenv('SPIKEWIDTH'));
+minpoint=str2num(getenv('MINPOINT'));
+thfactor=str2num(getenv('THFACTOR'));
+artth=str2num(getenv('ARTTH'));
+adcthreshold=str2num(getenv('ADCTHRESHOLD'));
+direction=getenv('DIRECTION');
+
+%clustering
+blocksize0=str2num(getenv('SBLOCKSIZE')); %min clustering block size
+clustnum=str2num(getenv('CLUSTNUM')); %number of clusters in each block
+kmeansdims=str2num(getenv('KMEANSDIMS')); %number of clusters in each block
+
+%adc params
+adcchan_num=str2num(getenv('ADCCHANNUM')); %total adc channels number
+adcchans=str2num(getenv('ADCCHANS')); %adc output channels
+
 % bgframes=str2num(getenv('BGFRAMES')); %bgframes=100
 obj_change=str2num(getenv('OBJ_CHANGE')); %rec. files where object location was changed
 skipfiles=str2num(getenv('SKIPFILES')); %files to skip
 
+%tracking
 framescale=str2num(getenv('FRAMESCALE')); %scaling of video file for feature tracking
-framecrop=getenv('FRAMECROP');  %cropping of videos for tracking
-cropsize=str2num(getenv('CROPSIZE')); %size of cropped image, pre-scaling
-
+% framecrop=getenv('FRAMECROP');  %cropping of videos for tracking
+% cropsize=str2num(getenv('CROPSIZE')); %size of cropped image, pre-scaling
+tracking_mode=getenv('TRACKMODE'); %ONLINE/OFFLINE
 trackname=getenv('TRACKNAME'); %name of tracking file
+medfiltk=str2num(getenv('MEDFILTK')); %tracking median kernel
+
+%traces
 trace_b=str2num(getenv('TRACEBLNK')); %trace blank time, ms
 trace_T=str2num(getenv('TRACET')); %total trace duration
 trace_S=str2num(getenv('TRACESAVED')); %saved trace duration
 
+%sync
 vsync_mode=getenv('VIDEO_SYNC'); 
 offline_sync_files=str2num(getenv('OFFLINE_SYNC_FILES'));
 
 sesspath=[datapath,'\',sdate,'\'];
 nfiles=dlmread([sesspath,'counter.txt']); %number of files in recording session
-eod_th=NaN;
+% nfiles=0;
+% eod_th=NaN;
 
 dnotch = designfilt('bandstopiir','FilterOrder',4, ...
     'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
     'DesignMethod','butter','SampleRate',samplerate);
-[b_dnotch,a_dnotch]=tf(dnotch)
-if(strcmp(bpf,'on'))
+[b_dnotch,a_dnotch]=tf(dnotch);
+% if(strcmp(bpf,'on'))
     dlp = designfilt('bandpassiir','FilterOrder',8, ...
             'HalfPowerFrequency1',hpf_cfr,'HalfPowerFrequency2',lpf_cfr, ...
              'SampleRate',samplerate);
-    [b_dlp,a_dlp]=tf(dlp)
+    [b_dlp,a_dlp]=tf(dlp);
 
-end
+% end
+
+% high-pass for spike extraction
+dhpf = designfilt('highpassiir', ...       % Response type
+       'StopbandFrequency',125, ...     % Frequency constraints
+       'PassbandFrequency',250, ...
+       'StopbandAttenuation',55, ...    % Magnitude constraints
+       'PassbandRipple',4, ...
+       'DesignMethod','cheby1', ...     % Design method
+       'MatchExactly','stopband', ...   % Design method options
+       'SampleRate',samplerate);               % Sample rate
+[b_dhpf,a_dhpf]=tf(dhpf);
+
+%% save params to database
+load(databasef);
+experiment(expnum).samplerate=samplerate;
+experiment(expnum).framerate=framerate;
+experiment(expnum).blocksize=blocksize;
+
+experiment(expnum).day(daynum).date=sdate;
+experiment(expnum).day(daynum).obj_change=obj_change;
+experiment(expnum).day(daynum).chan_num=chan_num;
+experiment(expnum).day(daynum).outchans=outchans;
+experiment(expnum).day(daynum).blocksize=blocksize;
+experiment(expnum).day(daynum).blankfile=blankfile;
+experiment(expnum).day(daynum).blankwins=blankwins;
+experiment(expnum).day(daynum).bpf=bpf;
+experiment(expnum).day(daynum).hpf_cfr=hpf_cfr;
+experiment(expnum).day(daynum).lpf_cfr=lpf_cfr;
+experiment(expnum).day(daynum).n60f=n60f;
+experiment(expnum).day(daynum).eoddetmode=eoddetmode;
+experiment(expnum).day(daynum).eodchan=eodchan;
+experiment(expnum).day(daynum).eodref=eodref;
+experiment(expnum).day(daynum).eoddiff=eoddiff;
+experiment(expnum).day(daynum).eodth=eodth;
+experiment(expnum).day(daynum).changroups=changroups;
+experiment(expnum).day(daynum).blank_gap=blank_gap;
+experiment(expnum).day(daynum).blank_pre=blank_pre;
+experiment(expnum).day(daynum).blank_post=blank_post;
+experiment(expnum).day(daynum).reftime=reftime;
+experiment(expnum).day(daynum).spikewidth=spikewidth;
+experiment(expnum).day(daynum).minpoint=minpoint;
+experiment(expnum).day(daynum).thfactor=thfactor;
+experiment(expnum).day(daynum).artth=artth;
+experiment(expnum).day(daynum).adcthreshold=adcthreshold;
+experiment(expnum).day(daynum).direction=direction;
+experiment(expnum).day(daynum).blocksize0=blocksize0;
+experiment(expnum).day(daynum).clustnum=clustnum;
+experiment(expnum).day(daynum).kmeansdims=kmeansdims;
+experiment(expnum).day(daynum).adcchan_num=adcchan_num;
+experiment(expnum).day(daynum).adcchans=adcchans;
+experiment(expnum).day(daynum).framescale=framescale;
+experiment(expnum).day(daynum).tracking_mode=tracking_mode;
+experiment(expnum).day(daynum).trackname=trackname;
+experiment(expnum).day(daynum).medfiltk=medfiltk;
+experiment(expnum).day(daynum).trace_b=trace_b;
+experiment(expnum).day(daynum).trace_T=trace_T;
+experiment(expnum).day(daynum).trace_S=trace_S;
+experiment(expnum).day(daynum).vsync_mode=vsync_mode;
+experiment(expnum).day(daynum).offline_sync_files=offline_sync_files;
+save(databasef,'experiment');
 
 %% get adxl parameters
 adxl_param=get_adxl_params(datapath);
 %%
 data=[];
+amp=[];
+adc=[];
 for i=1:nfiles
     i
     if(ismember(i-1,skipfiles))
@@ -96,14 +205,32 @@ for i=1:nfiles
         end
         load([sesspath,'data_',num2str(i-m),'.mat']);
     end
-%     get_posture(i);
-
-    %     clear data;    
-    get_sync_data(i);        
-    get_amp_data(i);    
-    get_aux_data(i);
-    get_posture_data(i);
     
+    get_sync_data(i);        
+    
+    if(blankfile==i-1)
+        blankwin=blankwins(blankfile==(i-1),:);
+    else
+        blankwin=[nan nan];
+    end
+    if(numel(outchans))
+        get_amp_data(i);
+    end
+    if(numel(adcchans))
+        get_adc_data(i);
+    end
+    if(numel(changroups))
+        [data.SPIKES]=get_spike_times(amp,changroups,eodind,b_dhpf,a_dhpf,data.FILE.offset,adc,sesspath,daynum);
+    end
+    
+    get_aux_data(i);
+
+    if(strcmpi(tracking_mode,'OFFLINE'))
+        get_posture_data(i);
+    else
+        get_online_tracking_data(i);
+    end
+        
     save([sesspath,'data_',num2str(i-1)],'data');
 end
 
@@ -175,16 +302,19 @@ end
     end
 
     function get_amp_data(i)
-%         outchans=[1:16];
         [t,amp]=read_bonsai_binary([sesspath,'amp_',num2str(i-1)],samplerate,chan_num,blocksize,outchans,'adc');
+        amp(inrange(t,blankwin),:)=0;
         if(isnan(eodth)) %first file
             get_eod_th(amp);
         end        
-        [eodind]=get_eod_times(t,amp);
         amp=filter_voltage(amp);        
-%         amp=remove_jumps(t,amp,eodind);
-        [data.EOD.t,data.EOD.traces]=get_lfp_data(t,amp,eodind);
-%         [data.EOD.traces,data.EOD.tr_amp,data.EOD.tr_lat]=clean_traces(traces);        
+        if(~strcmp(eoddetmode,'adc'))
+            [eodind]=get_eod_times(t,amp);
+            [data.EOD.t,data.EOD.traces]=get_lfp_data(t,amp,eodind);
+        end
+%         generate_amp_file(amp,changroups,eodind,b_dhpf,a_dhpf); %save filtered data in one big file for FAST
+%         end
+            
     end
 
     function get_eod_th(amp)
@@ -210,7 +340,7 @@ end
                         
     function [eodind]=get_eod_times(t,amp)
         if(strcmp(eoddiff,'on'))
-            a=[0;diff(amp(:,eodchan))];
+            a=[0;abs(diff(amp(:,eodchan)))];
         else
             a=amp(:,eodchan);
         end
@@ -314,12 +444,42 @@ end
 %             data.EOD.roll=interp1(t,roll,data.EOD.t);
 %             data.EOD.pitch=interp1(t,pitch,data.EOD.t);
 %             data.EOD.yaw=interp1(t,yaw,data.EOD.t);
-            data.EOD.accx=interp1(t,x,data.EOD.t);
-            data.EOD.accy=interp1(t,y,data.EOD.t);
-            data.EOD.accz=interp1(t,z,data.EOD.t);
+            if(isfield(data,'EOD'))
+                data.EOD.accx=interp1(t,x,data.EOD.t);
+                data.EOD.accy=interp1(t,y,data.EOD.t);
+                data.EOD.accz=interp1(t,z,data.EOD.t);
+            end
         end
 
     end
+
+    function get_adc_data(i)
+        [t,adc]=read_bonsai_binary([sesspath,'adc_',num2str(i-1)],samplerate,adcchan_num,blocksize,adcchans,'adc');
+        if(strcmp(eoddetmode,'adc'))
+            [eodind]=get_eod_times(t,adc);
+            data.EOD.t=t(eodind)-data.FILE.offset
+        end
+        [data.EOD.adcp2p,data.EOD.adcpr,data.EOD.adcpol]=get_adc_stats(data.EOD.t,t,adc);
+    end
+
+    function [peak2peak,peakratio,polarity]=get_adc_stats(eodtimes,t,adc)
+        N=2e-3*samplerate; %smaples pre/post eod  
+        ind=(eodtimes+data.FILE.offset)*samplerate;        
+        I=uint32(ind'*ones(1,2*N+1) + ones(numel(ind),1)*[-N:1:N]); %index matrix 
+        I(I<1)=1;
+        I(I>size(adc,1))=size(adc,1);
+        for m=1:size(adc,2)
+            v=filtfilt(b_dlp,a_dlp,adc(:,m));
+            traces(:,:,m)=v(I); 
+            [mm,im]=min(traces(:,:,m)');
+            [M,iM]=max(traces(:,:,m)');
+            med=median(traces(:,:,m)');
+            peak2peak(:,m)=M-mm;
+            peakratio(:,m)=(M-med)./(med-mm);
+            polarity(:,m)=(-1).^(iM>im);
+        end        
+                
+    end            
 
     function [t,roll,pitch,yaw]=get_adxl_angles(aux_t,aux_d)
 
@@ -402,17 +562,17 @@ end
         %plug in hear call to NN
         trackfile=[sesspath,'video_',num2str(i-1),trackname];
         [num,txt,raw] = xlsread([trackfile,'.csv']);
-        if(strcmp(framecrop,'on'))  %video was cropped for tracking
-            position=dlmread([sesspath,'tracking_offline_',num2str(i-1)]);
-            position(:,1)=position(:,1)-cropsize(1)/2;
-            position(:,2)=position(:,2)-cropsize(2)/2;
-            position=position/framescale;
-            if(size(position,1)<size(num,1))
-                num=num(1:end-1,:);
-            end
-        else
+%         if(strcmp(framecrop,'on'))  %video was cropped for tracking
+%             position=dlmread([sesspath,'tracking_offline_',num2str(i-1)]);
+%             position(:,1)=position(:,1)-cropsize(1)/2;
+%             position(:,2)=position(:,2)-cropsize(2)/2;
+%             position=position/framescale;
+%             if(size(position,1)<size(num,1))
+%                 num=num(1:end-1,:);
+%             end
+%         else
             position=[];
-        end
+%         end
         [fish,seg,coornames]=get_posture(txt,num,position);
         
         %interpolate isolated nans
@@ -431,7 +591,22 @@ end
         end
         data.EOD.posture=efish;
     end
+
+    function get_online_tracking_data(i)
+        %plug in hear call to NN
+        trackfile=[sesspath,'tracking_',num2str(i-1)];
+        a_x_y=dlmread(trackfile);
+        data.FRAME.posture=a_x_y(:,2:3);
         
+        %EOD sample posture
+        ind=1:min(numel(data.FRAME.t),size(data.FRAME.posture,1));
+        for j=1:size(data.FRAME.posture,2)
+            efish(:,j)=interp1(data.FRAME.t(ind),data.FRAME.posture(ind,j),data.EOD.t);
+        end
+        data.EOD.posture=efish;
+        data.FILE.model={'X','Y'};
+    end
+
             
 end
 
