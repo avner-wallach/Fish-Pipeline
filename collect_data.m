@@ -332,7 +332,7 @@ function [lat1,amp1,auc1,avtraces]=get_lfp_stats(traces)
             [mj,mjind]=min(traces(ijuxt,jind,chnind(k)),[],2);
             m(ijuxt)=mj;
             mind(ijuxt)=mjind+(trjuxt(k,3)-win(k,1))*samplerate/1e3;
-            size(:,k)=-m;
+            amp1(:,k)=-m;
             auc1(:,k)=-sum(traces(:,ind,chnind(k)).*(traces(:,ind,chnind(k))<0),2);
             lind=mind;            
         end        

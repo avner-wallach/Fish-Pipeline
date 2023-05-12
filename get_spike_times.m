@@ -43,10 +43,11 @@ Io=setdiff(Io,intersect(I,Io));
 I=I(I>0 & I<size(amp,1));
 Io=Io(Io>0 & Io<size(amp,1));
 
-C=zeros(size(amp,1),numel(cell2mat(changroups)));
-k=0;
+% C=zeros(size(amp,1),numel(cell2mat(changroups)));
+% k=0;
 for i=1:numel(changroups)
     A=amp(:,changroups{i}); %take channels of current tetrode    
+%     D=A;
     for j=1:numel(changroups{i})
         a=A(:,j);
         %blank EODs
@@ -57,8 +58,8 @@ for i=1:numel(changroups)
         a(I_gap)=0;
         A(:,j)=a;
     end 
-    C(:,k+[1:size(A,2)])=A;
-    k=k+size(A,2);    
+%     C(:,k+[1:size(A,2)])=A;
+%     k=k+size(A,2);    
     
     if(strcmp(direction,'falling'))
         [spiketimes,spiketraces,spikeidx]=MySpikeFinder(min(A,[],2),samplerate,reftime,spikewidth,minpoint,thfactor,'falling',0);
@@ -127,12 +128,19 @@ for i=1:numel(changroups)
     
 end
 
-if(numel(sesspath))
-    filename=[sesspath,'spdata',num2str(daynum)];
-    %append to binary file
-    F=fopen(filename,'a');
-    fwrite(F,C','int16');
-    fclose(F);
-end
+% if(numel(sesspath))
+% 
+%     filename=[sesspath,'spdata_no_lpf',num2str(daynum)];
+%     %append to binary file
+%     F=fopen(filename,'a');
+%     fwrite(F,C','int16');
+%     fclose(F);
+% 
+% %     filename=[sesspath,'spdata_raw',num2str(daynum)];
+% %     %append to binary file
+% %     F=fopen(filename,'a');
+% %     fwrite(F,D','int16');
+% %     fclose(F);
+% end
 
 end

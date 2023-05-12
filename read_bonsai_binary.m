@@ -3,6 +3,9 @@ function [ t,data ] = read_bonsai_binary(fileName,samplefreq,numChannels,blocksi
 %   Detailed explanation goes here
 T=31*60; %time of recording (in s)
 N=50; %number of blocks per channel in each read
+if(all(chans<2)) %indices
+    chans=find(chans);
+end
 if(nargin<6)
     chans=1:numChannels;
 end
@@ -16,7 +19,7 @@ A=uint16(zeros(T*samplefreq,numel(chans)));
 
 %read it
 D = fopen(fileName);
-tic;
+% tic;
 B = fread(D,N*blocksize*numChannels,'uint16');
 k=1; j=1;
 while(numel(B)>0)    
@@ -33,11 +36,11 @@ while(numel(B)>0)
         end
     end
     k=k+M;    
-    clc;
-    disp(k/(T*samplefreq));   
-    a=toc/N;
-    disp(a)
-    tic
+%     clc;
+%     disp(k/(T*samplefreq));   
+%     a=toc/N;
+%     disp(a)
+%     tic
     B = fread(D,N*blocksize*numChannels,'uint16');
 end
 
@@ -68,8 +71,10 @@ A(k:end,:)=[]; %remove trailing zeros
 S=2^(bits-1);
 if(strcmp(source,'aux'))
     a=0.0000374;%in v
-else
+elseif(strcmp(source,'adc'))
     a=0.195; %in uV
+else
+    a=0.1007;
 end
 data=(double(A)-S)*a;
 

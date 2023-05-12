@@ -1,4 +1,4 @@
-function []=save_raw_spfile(amp,changroups,eodind,b_dhpf,a_dhpf,sesspath)
+function []=save_raw_spfile(amp,ops,segnum,eodind,fname)
 %   GET_SPIKE_TIMES extract spike times from continuous tetrode recording.
 %   t- input time vector
 %   amp- input voltage matrix (column/channel)
@@ -6,63 +6,93 @@ function []=save_raw_spfile(amp,changroups,eodind,b_dhpf,a_dhpf,sesspath)
 %               be analyzed.
 %   eodtimes- times of eod pulses
 %% PARAMETERS
-samplerate=str2num(getenv('SAMPLERATE'));
-eodtimes=eodind/samplerate;
+samplerate=ops.samplerate;
 
-%blanking
-blank_gap=str2num(getenv('BLANKGAP'))*samplerate;
-blank_pre=str2num(getenv('BLANKPRE'))*samplerate;
-blank_post=str2num(getenv('BLANKPOST'))*samplerate;
+%EOD blanking
+eod_pre=ops.eodblankpre*samplerate;
+eod_post=ops.eodblankpost*samplerate;
 
-%spike detection
-reftime=str2num(getenv('REFTIME'));
-spikewidth=str2num(getenv('SPIKEWIDTH'));
-minpoint=str2num(getenv('MINPOINT'));
-thfactor=str2num(getenv('THFACTOR'));
-artth=str2num(getenv('ARTTH'));
-adcthreshold=str2num(getenv('ADCTHRESHOLD'));
-direction=getenv('DIRECTION');
+%LFP blanking
+blank_pre=ops.blankpre*samplerate;
+blank_post=ops.blankpost*samplerate;
 
-%clustering
-blocksize0=str2num(getenv('SBLOCKSIZE')); %min clustering block size
-clustnum=str2num(getenv('CLUSTNUM')); %number of clusters in each block
-kmeansdims=str2num(getenv('KMEANSDIMS')); %number of clusters in each block
-isiedges=[0:.1:5];
-isibins=edge2bin(isiedges);
+%changroups
+changroups=cell2mat(ops.seg(segnum).LFPgroups(ops.seg(segnum).Spkgroups));
+A=amp(:,changroups); %take channels of current tetrode    
 
-%% 
-K=10;
-L=10;
+%filename
+filename=[ops.spdatpath,'\spdata_seg',num2str(segnum),'.bin'];
+logfile=[ops.spdatpath,'\spdata_seg',num2str(segnum),'.log'];
+%% old method filtering (interpolation + blanking)
+% K=100;
+% 
+% %blanking sections
+% I=eodind*ones(1,blank_pre+blank_post+1) + ones(size(eodind,1),1)*[-blank_pre:blank_post];
+% 
+% %100 samples before and after sections
+% Io=eodind*ones(1,K*2) + ones(size(eodind,1),1)*[[(-blank_pre-K):(-blank_pre-1)] [(blank_post+1):(blank_post+K)]];
+% 
+% I=unique(I(:));
+% Io=unique(Io(:));
+% Io=setdiff(Io,intersect(I,Io));
+% I=I(I>0 & I<size(amp,1));
+% Io=Io(Io>0 & Io<size(amp,1));
+% if(I(1)==1)
+%     Io=[1;Io];
+% end
+% for j=1:numel(changroups)
+%     a=A(:,j);
+%     %blank EODs
+%     B=interp1(Io(:),a(Io(:)),I,'pchip');
+%     a(I)=B;
+%     A(:,j)=a;
+% end    
+%% new method filtering : median filtering + EOD blanking + LFP template cancelation
+K=2e-3*samplerate; %med filt kernel
+A=A-medfilt1(A,K,[],1); %use median filter to remove slow components
+
+%EOD blanking sections
+I_eod=eodind*ones(1,eod_pre+eod_post+1) + ones(size(eodind,1),1)*[-eod_pre:eod_post];
+I_eod=unique(I_eod(:));
+I_eod=I_eod(I_eod>0 & I_eod<size(amp,1));
+
+A(I_eod(:),:)=0; %blank eod
+
+%LFP blanking sections
+eodind=eodind(eodind>blank_pre & eodind<(size(amp,1)-blank_post));
 I=eodind*ones(1,blank_pre+blank_post+1) + ones(size(eodind,1),1)*[-blank_pre:blank_post];
-Io=eodind*ones(1,K*2) + ones(size(eodind,1),1)*[[(-blank_pre-K*L):L:(-blank_pre-1)] [(blank_post+1):L:(blank_post+K*L)]];
-I_gap=eodind*ones(1,blank_pre+blank_post+1+2*blank_gap) + ones(size(eodind,1),1)*[-(blank_pre+blank_gap):(blank_post+blank_gap)];
-I=unique(I(:));
-Io=unique(Io(:));
-I_gap=unique(I_gap(I_gap>0 & I_gap<=size(amp,1)));
-Io=setdiff(Io,intersect(I,Io));
-I=I(I>0 & I<size(amp,1));
-Io=Io(Io>0 & Io<size(amp,1));
 
-C=zeros(size(amp,1),numel(cell2mat(changroups)));
-k=0;
-for i=1:numel(changroups)
-    A=amp(:,changroups{i}); %take channels of current tetrode    
-    for j=1:numel(changroups{i})
-        a=A(:,j);
-        %blank EODs
-        B=interp1(Io(:),a(Io(:)),I,'pchip');
-        a(I)=B;
-        a=FiltFiltM(b_dhpf,a_dhpf,a);
-        %blank EODs +gaps
-        a(I_gap)=0;
-        A(:,j)=a;
-    end    
-    C(:,k+[1:size(A,2)])=A;
-    k=k+size(A,2);
+for i=1:size(A,2)
+    a=A(:,i);
+    Y=a(I)';    
+    [x,tr]=plot_graded(1:size(I,2),Y',[],max(abs(Y)),50,0);
+    cc=corr(Y,tr');
+    [c0,mm]=max(cc,[],2);
+    T=tr(mm,:)';
+    beta=(sum(T.*Y))./vecnorm(T).^2;
+    D=beta'*ones(1,size(tr,2)).*T';    
+%     medtrace(:,i)=nanmedian(a(I),1);
+%     cr(i,:)=medtrace(:,i)\a(I)';
+%     D=cr(i,:)'*medtrace(:,i)';
+    a(I)=a(I)-D;
+    A(:,i)=a;    
 end
 
-%append to binary file
+%% save data
+% add empty channels if group is smaller than 4 channels
+if(size(A,2)<4)
+    A=[A zeros(size(A,1),4-size(A,2))];
+end
+
+%append data to binary file
 F=fopen(filename,'a');
-fwrite(F,C','int16');
+fwrite(F,A','int16');
 fclose(F);
+
+%append data to log file
+% F=fopen(logfile,'a');
+% fwrite(F,fname,'int16');
+dlmwrite(logfile,fname,'-append');
+% fclose(F);
+
 end

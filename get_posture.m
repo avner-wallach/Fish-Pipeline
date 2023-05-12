@@ -1,6 +1,8 @@
-function [fish,seg,coornames,data]=get_posture(txt,num,position)
+function [fish,seg,coornames,data]=get_posture(txt,num,position,medfiltk)
 % get DeepLabCut tracking data and convert to model
-    medfiltk=str2num(getenv('MEDFILTK')); %tracking median kernel
+    if(nargin<4)
+        medfiltk=str2num(getenv('MEDFILTK')); %tracking median kernel
+    end
 
     fnames=unique(txt(2,2:end));
     for i=1:numel(fnames)

@@ -1,5 +1,5 @@
 function [c,bins]=MyXcor(x,y,T)
-bin_size=0.1; %ms
+bin_size=1; %ms
 x=x(:); y=y(:);
 edges=[-T+bin_size/2:bin_size:T-bin_size/2];
 bins=edges+bin_size/2;
@@ -10,11 +10,12 @@ k=1;
 p=1;
 P=1e4;
 if(numel(x))
-    while((p+P)<numel(x))
-        xx=x(p:p+P-1);
+    while(p<numel(x))
+        N=min(numel(x),p+P-1);
+        xx=x(p:N);
         yy=y(y>=xx(1)+edges(1) & y<xx(end)+edges(end));
         for i=1:length(xx)
-            yyy=yy(yy>=(x(i)+edges(1)) & yy<(x(i)+edges(end)) & yy~=x(i))'-x(i);
+            yyy=yy(yy>=(xx(i)+edges(1)) & yy<(xx(i)+edges(end)) & yy~=xx(i))'-xx(i);
             z(k:k+numel(yyy)-1)=yyy;        
             k=k+numel(yyy);
             if(k>K-1e3)
